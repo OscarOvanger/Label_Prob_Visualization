@@ -41,7 +41,7 @@ The first run downloads the table (about 150 MB) into the Hugging Face cache. Ou
 
 | File | Contents |
 | --- | --- |
-| `outputs/label_propagation.mp4` | 200-frame movie |
+| `outputs/label_propagation.mp4` | 200 frames at 10 fps, then the final comparison is held for 3 seconds |
 | `outputs/label_propagation.gif` | same movie as a GIF |
 | `outputs/keyframes/` | opening, early epochs, and the final comparison |
 | `outputs/summary.json` | graph stats and held-out accuracy |

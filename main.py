@@ -146,12 +146,17 @@ def l2_normalize(x):
 def knn_affinity(descriptors, k, gamma):
     """Equation (9): a_ij = [v_i · v_j]_+^γ when i is a k-NN of j."""
     n = descriptors.shape[0]
-    neighbors = NearestNeighbors(n_neighbors=k + 1, metric="euclidean")
+    # Ask for extra neighbors so exact duplicate rows still leave k others
+    # after self is removed.
+    neighbors = NearestNeighbors(n_neighbors=k + 3, metric="euclidean")
     neighbors.fit(descriptors)
     _, index = neighbors.kneighbors(descriptors)
-    if not np.array_equal(index[:, 0], np.arange(n)):
-        raise RuntimeError("k-NN did not return each point as its own neighbor.")
-    nbr = index[:, 1:]
+    nbr = np.empty((n, k), dtype=np.int64)
+    for j, row in enumerate(index):
+        others = [int(i) for i in row if i != j]
+        if len(others) < k:
+            raise RuntimeError(f"Point {j} has fewer than {k} neighbors.")
+        nbr[j] = others[:k]
     rows = nbr.ravel()
     cols = np.repeat(np.arange(n), k)
     sims = np.sum(descriptors[rows] * descriptors[cols], axis=1)
@@ -275,9 +280,9 @@ def _draw_graph(ax, segments):
     ax.add_collection(
         LineCollection(
             segments,
-            colors="#9aa0a6",
-            linewidths=0.35,
-            alpha=0.45,
+            colors="#6b7280",
+            linewidths=0.6,
+            alpha=0.7,
             zorder=1,
         )
     )
@@ -310,10 +315,23 @@ def _footer(fig, x=0.46):
     )
 
 
+def _inches_to_fig(width_in, height_in):
+    return width_in / FIGSIZE[0], height_in / FIGSIZE[1]
+
+
 def render_evolution_frame(path, xy, segments, labeled, weight, epoch, delta):
-    fig, ax = plt.subplots(figsize=FIGSIZE, dpi=DPI)
+    fig = plt.figure(figsize=FIGSIZE, dpi=DPI)
     fig.patch.set_facecolor("white")
-    fig.subplots_adjust(left=0.04, right=0.90, top=0.84, bottom=0.08)
+    # Square axes, centered, with the colorbar immediately to its right.
+    # A wide 16:9 subplot plus equal aspect otherwise pins the cloud to one side.
+    side = 5.35
+    width, height = _inches_to_fig(side, side)
+    colorbar_width = 0.018
+    gap = 0.02
+    left = (1.0 - width - gap - colorbar_width) / 2
+    bottom = 0.11
+    ax = fig.add_axes([left, bottom, width, height])
+    color_ax = fig.add_axes([left + width + gap, bottom + 0.03, colorbar_width, height - 0.06])
     _draw_graph(ax, segments)
     rgba = colors_from_weights(weight)
     _scatter(ax, xy, rgba, labeled, weight)
@@ -321,9 +339,7 @@ def render_evolution_frame(path, xy, segments, labeled, weight, epoch, delta):
 
     colorbar = fig.colorbar(
         plt.cm.ScalarMappable(cmap=WEIGHT_CMAP, norm=plt.Normalize(0, 1)),
-        ax=ax,
-        fraction=0.046,
-        pad=0.02,
+        cax=color_ax,
     )
     colorbar.set_label("fraud weight", fontsize=9)
     colorbar.set_ticks([0, 0.5, 1])
@@ -352,9 +368,17 @@ def render_final_frame(path, xy, segments, labeled, scores, y):
     pred_weight = np.where(known, predicted.astype(np.float64), -1.0)
     truth_weight = y.astype(np.float64)
 
-    fig, axes = plt.subplots(1, 2, figsize=FIGSIZE, dpi=DPI)
+    fig = plt.figure(figsize=FIGSIZE, dpi=DPI)
     fig.patch.set_facecolor("white")
-    fig.subplots_adjust(left=0.03, right=0.98, top=0.80, bottom=0.10, wspace=0.08)
+    side = 4.55
+    width, height = _inches_to_fig(side, side)
+    gap = 0.07
+    left = (1.0 - 2 * width - gap) / 2
+    bottom = 0.16
+    axes = [
+        fig.add_axes([left, bottom, width, height]),
+        fig.add_axes([left + width + gap, bottom, width, height]),
+    ]
     fig.suptitle(
         "Epoch 200    argmax pseudo-labels beside held-out ground truth",
         fontsize=15,
@@ -386,27 +410,21 @@ def render_final_frame(path, xy, segments, labeled, scores, y):
     plt.close(fig)
 
 
-def write_video(frame_paths, mp4_path, gif_path):
+def write_video(mp4_path, gif_path):
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg is required to encode the movie.")
-    listing = FRAME_DIR / "frames.txt"
-    listing.write_text(
-        "".join(f"file '{path.name}'\nduration 0.1\n" for path in frame_paths)
-        + f"file '{frame_paths[-1].name}'\n",
-        encoding="utf-8",
-    )
     subprocess.run(
         [
             "ffmpeg",
             "-y",
-            "-f",
-            "concat",
-            "-safe",
+            "-framerate",
+            "10",
+            "-start_number",
             "0",
             "-i",
-            str(listing),
-            "-vsync",
-            "vfr",
+            str(FRAME_DIR / "frame_%03d.png"),
+            "-vf",
+            "tpad=stop_mode=clone:stop_duration=3",
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -415,7 +433,6 @@ def write_video(frame_paths, mp4_path, gif_path):
             "18",
             str(mp4_path),
         ],
-        cwd=FRAME_DIR,
         check=True,
         capture_output=True,
     )
@@ -423,20 +440,17 @@ def write_video(frame_paths, mp4_path, gif_path):
         [
             "ffmpeg",
             "-y",
-            "-f",
-            "concat",
-            "-safe",
+            "-framerate",
+            "10",
+            "-start_number",
             "0",
             "-i",
-            str(listing),
-            "-vsync",
-            "vfr",
+            str(FRAME_DIR / "frame_%03d.png"),
             "-vf",
-            "fps=10,scale=800:-1:flags=lanczos,split[s0][s1];"
-            "[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse",
+            "tpad=stop_mode=clone:stop_duration=3,scale=800:-1:flags=lanczos,"
+            "split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse",
             str(gif_path),
         ],
-        cwd=FRAME_DIR,
         check=True,
         capture_output=True,
     )
@@ -534,7 +548,7 @@ def main():
     mp4_path = OUTPUT_DIR / "label_propagation.mp4"
     gif_path = OUTPUT_DIR / "label_propagation.gif"
     print("Encoding mp4 and gif...")
-    write_video(frame_paths, mp4_path, gif_path)
+    write_video(mp4_path, gif_path)
 
     key_epochs = {
         "epoch_000_seeds.png": 0,
