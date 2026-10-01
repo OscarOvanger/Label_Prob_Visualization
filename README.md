@@ -2,6 +2,14 @@
 
 Visual demo of the transductive step in [Label Propagation for Deep Semi-supervised Learning](https://arxiv.org/abs/1904.04717) (Iscen, Tolias, Avrithis, Chum, 2019).
 
+<video src="https://github.com/OscarOvanger/Label_Prob_Visualization/raw/main/outputs/label_propagation.mp4" controls autoplay loop muted playsinline width="800"></video>
+
+The same movie, as a GIF, for viewers that do not play the file above:
+
+![Label propagation on MNIST digits 0, 1, and 2](outputs/label_propagation.gif)
+
+[Download the mp4](outputs/label_propagation.mp4) (200 frames at 10 fps, then the final comparison is held for 3 seconds).
+
 The movie projects digit images with UMAP, draws the 2-nearest-neighbor graph in that plane, and plays 200 epochs of label diffusion. Each image has one of three labels: digit 0 (red), digit 1 (blue), or digit 2 (green). A soft label mixes those colors in proportion to the three class weights.
 
 ## What the movie shows
