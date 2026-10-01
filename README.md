@@ -2,11 +2,13 @@
 
 Visual demo of the transductive step in [Label Propagation for Deep Semi-supervised Learning](https://arxiv.org/abs/1904.04717) (Iscen, Tolias, Avrithis, Chum, 2019).
 
-The movie projects transaction descriptors with UMAP, draws the 2-nearest-neighbor graph in that plane, and plays 200 epochs of label diffusion. Fraud is blue and non-fraud is red.
+The movie projects transaction descriptors with UMAP, draws the 2-nearest-neighbor graph in that plane, and plays 200 epochs of label diffusion. Fraud is blue and drawn on top. Non-fraud is red and drawn lighter, so the ten fraud cases are not buried in the majority class.
+
+UMAP uses `min_dist=0.8` so those fraud cases are not stacked on the same pixels as the non-fraud mass. t-SNE was compared at several perplexities and packed the fraud group even tighter against its neighbors, so the movie stays on UMAP. All 2,000 points are still shown.
 
 ## What the movie shows
 
-1. **Opening frame.** 2000 points. The 200 seeds are triangles: 4 fraud (blue) and 196 non-fraud (red). The other 1800 points are gray circles. Six of the ten fraud transactions are among those unlabeled points.
+1. **Opening frame.** 2000 points. The 200 seeds are triangles: 4 fraud (blue, large) and 196 non-fraud (red, light). The other 1800 points are gray circles. Six of the ten fraud transactions are among those unlabeled points.
 2. **Middle frames.** One frame per epoch. Every point is colored by its propagated class weight, from red (non-fraud) through pale (mixed) to blue (fraud). Points that still have no mass stay gray.
 3. **Final frame.** Hard labels from `argmax` of the propagated weights, beside the ground truth for all 2000 points, including the labels that were held out.
 

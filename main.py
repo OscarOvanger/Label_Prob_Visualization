@@ -211,7 +211,9 @@ def project_umap(descriptors):
     reducer = umap.UMAP(
         n_components=2,
         n_neighbors=15,
-        min_dist=0.1,
+        # A larger min_dist keeps the fraud cases from stacking on the
+        # non-fraud mass. t-SNE packed that group even tighter.
+        min_dist=0.8,
         metric="cosine",
         random_state=SEED,
     )
@@ -251,26 +253,57 @@ def hard_colors(classes, known):
 
 
 def _scatter(ax, xy, rgba, labeled, weight_for_size):
-    """Triangles are seeds. Fraud-weighted points are drawn larger and last."""
+    """Non-fraud is a light background. Fraud is large, opaque, and on top.
+
+    Ten fraud points inside 1,990 non-fraud markers disappear if both are
+    drawn the same way. Seeds stay triangles.
+    """
     fraudish = weight_for_size > 0.5
-    circle = ~labeled
-    for mask, marker, base in (
-        (circle & ~fraudish, "o", 14.0),
-        (circle & fraudish, "o", 42.0),
-        (labeled & ~fraudish, "^", 28.0),
-        (labeled & fraudish, "^", 70.0),
+    background = rgba.copy()
+    background[~fraudish, 3] = 0.22
+    unknown = weight_for_size < 0
+    background[unknown, 3] = 0.38
+
+    for mask, marker, size in (
+        (~labeled & ~fraudish, "o", 10.0),
+        (labeled & ~fraudish, "^", 16.0),
     ):
         if not np.any(mask):
             continue
         ax.scatter(
             xy[mask, 0],
             xy[mask, 1],
-            c=rgba[mask],
-            s=base,
+            c=background[mask],
+            s=size,
             marker=marker,
-            linewidths=0.4,
-            edgecolors="#222222",
-            zorder=3 if marker == "o" else 4,
+            linewidths=0,
+            zorder=2 if marker == "o" else 3,
+        )
+
+    for mask, marker, size in (
+        (~labeled & fraudish, "o", 70.0),
+        (labeled & fraudish, "^", 120.0),
+    ):
+        if not np.any(mask):
+            continue
+        ax.scatter(
+            xy[mask, 0],
+            xy[mask, 1],
+            s=size * 2.4,
+            c="white",
+            marker=marker,
+            linewidths=0,
+            zorder=5,
+        )
+        ax.scatter(
+            xy[mask, 0],
+            xy[mask, 1],
+            c=rgba[mask],
+            s=size,
+            marker=marker,
+            linewidths=0.7,
+            edgecolors="#08306b",
+            zorder=6,
         )
 
 
@@ -280,9 +313,9 @@ def _draw_graph(ax, segments):
     ax.add_collection(
         LineCollection(
             segments,
-            colors="#6b7280",
-            linewidths=0.6,
-            alpha=0.7,
+            colors="#9aa0a6",
+            linewidths=0.35,
+            alpha=0.28,
             zorder=1,
         )
     )
@@ -306,8 +339,8 @@ def _footer(fig, x=0.46):
     fig.text(
         x,
         0.015,
-        "Blue = fraud    Red = non-fraud    Gray = no propagated mass"
-        "    Triangle = labeled seed    Circle = unlabeled",
+        "Blue fraud is drawn on top    Red non-fraud is lighter"
+        "    Gray = no propagated mass    Triangle = labeled seed",
         ha="center",
         va="bottom",
         fontsize=9,
