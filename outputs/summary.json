@@ -1,76 +1,43 @@
 {
-  "dataset": "jyunyilin/credit-card-fraud-detection",
-  "requested_dataset": "mlegrad/msbd5013-creditcard-fraud",
-  "n_points": 2000,
-  "n_fraud": 10,
-  "n_labeled": 200,
-  "n_labeled_fraud": 4,
-  "n_labeled_nonfraud": 196,
-  "n_held_out_fraud": 6,
-  "features": [
-    "V1",
-    "V2",
-    "V3",
-    "V4",
-    "V5",
-    "V6",
-    "V7",
-    "V8",
-    "V9",
-    "V10",
-    "V11",
-    "V12",
-    "V13",
-    "V14",
-    "V15",
-    "V16",
-    "V17",
-    "V18",
-    "V19",
-    "V20",
-    "V21",
-    "V22",
-    "V23",
-    "V24",
-    "V25",
-    "V26",
-    "V27",
-    "V28",
-    "Amount"
+  "dataset": "ylecun/mnist",
+  "classes": [
+    "digit 0",
+    "digit 1",
+    "digit 2"
   ],
+  "n_points": 2000,
+  "n_per_class": {
+    "digit 0": 667,
+    "digit 1": 667,
+    "digit 2": 666
+  },
+  "n_labeled": 200,
+  "n_labeled_per_class": {
+    "digit 0": 67,
+    "digit 1": 67,
+    "digit 2": 66
+  },
+  "features": "flattened 28x28 pixels, scaled to [0, 1], L2-normalized",
   "k": 2,
   "gamma": 3.0,
   "alpha": 0.99,
   "epochs": 200,
   "seed": 0,
-  "undirected_edges": 2872,
-  "connected_components": 11,
-  "delta_epoch_10": 2.4350448033962064,
-  "delta_epoch_200": 0.00122277594802538,
+  "undirected_edges": 3128,
+  "connected_components": 4,
+  "delta_epoch_10": 2.0454469930334374,
+  "delta_epoch_200": 0.0010511758634112831,
   "frame_size": [
     1280,
     720
   ],
-  "unlabeled_accuracy": 0.9983333333333333,
-  "reached_unlabeled_accuracy": 0.9983127109111362,
-  "labeled_seed_accuracy": 0.995,
-  "held_out_fraud_recall": 0.6666666666666666,
-  "held_out_fraud_predicted": [
-    1,
-    1,
-    0,
-    1,
-    1,
-    0
-  ],
-  "held_out_fraud_weight": [
-    0.7029,
-    0.6987,
-    0.0,
-    0.7065,
-    0.7028,
-    0.0
-  ],
-  "fraction_reached": 0.989,
-  "predicted_fraud": 10
+  "unlabeled_accuracy": 0.98,
+  "reached_unlabeled_accuracy": 0.9849246231155779,
+  "labeled_seed_accuracy": 0.99,
+  "unlabeled_recall_per_class": {
+    "digit 0": 0.9983333333333333,
+    "digit 1": 0.985,
+    "digit 2": 0.9566666666666667
+  },
+  "fraction_reached": 0.9955
 }

@@ -1,22 +1,20 @@
-# Label propagation on credit-card fraud
+# Label propagation on three MNIST digits
 
 Visual demo of the transductive step in [Label Propagation for Deep Semi-supervised Learning](https://arxiv.org/abs/1904.04717) (Iscen, Tolias, Avrithis, Chum, 2019).
 
-The movie projects transaction descriptors with UMAP, draws the 2-nearest-neighbor graph in that plane, and plays 200 epochs of label diffusion. Fraud is blue and drawn on top. Non-fraud is red and drawn lighter, so the ten fraud cases are not buried in the majority class.
-
-UMAP uses `min_dist=0.8` so those fraud cases are not stacked on the same pixels as the non-fraud mass. t-SNE was compared at several perplexities and packed the fraud group even tighter against its neighbors, so the movie stays on UMAP. All 2,000 points are still shown.
+The movie projects digit images with UMAP, draws the 2-nearest-neighbor graph in that plane, and plays 200 epochs of label diffusion. Each image has one of three labels: digit 0 (red), digit 1 (blue), or digit 2 (green). A soft label mixes those colors in proportion to the three class weights.
 
 ## What the movie shows
 
-1. **Opening frame.** 2000 points. The 200 seeds are triangles: 4 fraud (blue, large) and 196 non-fraud (red, light). The other 1800 points are gray circles. Six of the ten fraud transactions are among those unlabeled points.
-2. **Middle frames.** One frame per epoch. Every point is colored by its propagated class weight, from red (non-fraud) through pale (mixed) to blue (fraud). Points that still have no mass stay gray.
+1. **Opening frame.** 2000 points, split as evenly as possible across the three digits. The 200 seeds are triangles, also split across the three classes. The other 1800 points are gray circles.
+2. **Middle frames.** One frame per epoch. Every point is colored by its propagated class weights. Points that still have no mass stay gray.
 3. **Final frame.** Hard labels from `argmax` of the propagated weights, beside the ground truth for all 2000 points, including the labels that were held out.
 
-With this many seeds the 2-NN graph is covered quickly: unlabeled points that share a component with a seed are reached in roughly the first 10 epochs. Later frames are the fixed point of the same iteration, which is what running all 200 epochs produces.
+With this many seeds the 2-NN graph is covered quickly. Later frames are the fixed point of the same iteration, which is what running all 200 epochs produces.
 
 ## Algorithm
 
-Descriptors are the PCA features `V1`–`V28` plus `Amount` (the `Time` stamp is left out). They are standardized and L2-normalized, matching the unit-norm embeddings in the paper.
+Descriptors are the 28×28 pixels scaled to [0, 1] and L2-normalized, the same unit-norm embedding step the paper uses before building the graph.
 
 The graph follows equation (9): for each point, the `k = 2` nearest neighbors get affinity `[cosine]_+^3`, then the affinity is symmetrized and degree-normalized. Labels then diffuse with the Zhou et al. iteration the paper cites:
 
@@ -28,9 +26,9 @@ Z ← α S Z + (1 − α) Y,    α = 0.99
 
 ## Data
 
-`python main.py` first tries the requested Hub dataset `mlegrad/msbd5013-creditcard-fraud`. That repository is not publicly readable from this environment (the Hub returns 401). The script then loads `jyunyilin/credit-card-fraud-detection`, a public copy of the same ULB credit-card fraud table: 284,807 transactions, columns `Time`, `V1`–`V28`, `Amount`, and `Class`.
+The images come from [`ylecun/mnist`](https://huggingface.co/datasets/ylecun/mnist) on Hugging Face. The demo keeps a deterministic subset of 2,000 training digits (`numpy` seed 0): digits 0, 1, and 2 only.
 
-The demo keeps a deterministic subset of 2,000 rows with exactly 10 fraud cases (`numpy` seed 0).
+Each point has a single class. The propagation step ends in an `argmax`, so this is a three-class problem rather than a multi-label one in which one image would carry several labels at once.
 
 ## Run
 
@@ -39,7 +37,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-The first run downloads the table (about 150 MB) into the Hugging Face cache. Outputs:
+The first run downloads MNIST into the Hugging Face cache. Outputs:
 
 | File | Contents |
 | --- | --- |

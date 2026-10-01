@@ -1,11 +1,11 @@
-"""Visual demo of label propagation on credit-card fraud.
+"""Visual demo of label propagation on three MNIST digits.
 
 Implements the transductive diffusion step of Iscen et al.,
 "Label Propagation for Deep Semi-supervised Learning" (arXiv:1904.04717).
 
-A 2-NN graph is built on L2-normalized transaction descriptors. Labels
-diffuse for 200 epochs of the Zhou iteration cited in that paper. The
-epochs are drawn on a fixed 2D UMAP of the same descriptors.
+A 2-NN graph is built on L2-normalized image descriptors. Labels diffuse
+for 200 epochs of the Zhou iteration cited in that paper. The epochs are
+drawn on a fixed 2D UMAP of the same descriptors.
 """
 
 from __future__ import annotations
@@ -22,26 +22,23 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.lines import Line2D
 from sklearn.neighbors import NearestNeighbors
-from sklearn.preprocessing import StandardScaler
 
-# Protocol requested for the demo.
+# Same protocol as the fraud demo, on three classes instead of two.
 N_POINTS = 2000
-N_FRAUD = 10
 N_LABELED = 200
-N_LABELED_FRAUD = 4
 K_NEIGHBORS = 2
 GAMMA = 3.0
 ALPHA = 0.99
 N_EPOCHS = 200
 SEED = 0
 
-REQUESTED_DATASET = "mlegrad/msbd5013-creditcard-fraud"
-FALLBACK_DATASET = "jyunyilin/credit-card-fraud-detection"
+DATASET_ID = "ylecun/mnist"
+DIGITS = (0, 1, 2)
 
-FRAUD_BLUE = "#2166ac"
-NONFRAUD_RED = "#b2182b"
+# One color per class. Soft labels mix these in proportion to the weights.
+CLASS_COLORS = ("#e41a1c", "#377eb8", "#4daf4a")
 UNLABELED_GRAY = "#bdbdbd"
 FIGSIZE = (12.8, 7.2)
 DPI = 100
@@ -51,103 +48,81 @@ OUTPUT_DIR = ROOT / "outputs"
 FRAME_DIR = OUTPUT_DIR / "frames"
 KEYFRAME_DIR = OUTPUT_DIR / "keyframes"
 
-# Red (non-fraud) -> pale (mixed weight) -> blue (fraud).
-WEIGHT_CMAP = LinearSegmentedColormap.from_list(
-    "fraud_weight",
-    [NONFRAUD_RED, "#f7f7f7", FRAUD_BLUE],
-)
+
+def class_names():
+    return tuple(f"digit {digit}" for digit in DIGITS)
 
 
-def get_fraud_data():
-    """Load the credit-card fraud table as a pandas frame.
+def class_rgb():
+    return np.array(
+        [matplotlib.colors.to_rgb(color) for color in CLASS_COLORS],
+        dtype=np.float64,
+    )
 
-    Tries the requested Hub dataset first. If that repository cannot be
-    read, falls back to a public mirror of the same ULB table.
-    """
+
+def get_mnist_labels():
+    """Load MNIST train labels. Images are fetched only for the subset."""
     from datasets import load_dataset
 
-    try:
-        dataset = load_dataset(REQUESTED_DATASET, split="train")
-        return dataset.to_pandas(), REQUESTED_DATASET
-    except Exception as exc:
-        print(
-            f"Could not load {REQUESTED_DATASET!r} "
-            f"({type(exc).__name__}: {exc})."
-        )
-        print(
-            "Using the public ULB credit-card fraud mirror "
-            f"{FALLBACK_DATASET!r}."
-        )
-        dataset = load_dataset(FALLBACK_DATASET, split="train")
-        return dataset.to_pandas(), FALLBACK_DATASET
+    dataset = load_dataset(DATASET_ID, split="train")
+    labels = np.asarray(dataset["label"], dtype=np.int64)
+    return dataset, labels
 
 
-def feature_matrix(df):
-    """Descriptors used for the graph and for UMAP.
+def subsample(labels, rng):
+    """2000 images split across the three digits, then 200 seeds.
 
-    V1–V28 are the dataset's PCA embeddings. Amount is kept and scaled
-    with them. Time is a timestamp, so it is not used as a descriptor.
+    Counts are as even as the totals allow. The other 1800 labels are held out.
+    Returned labels are 0, 1, 2 in DIGITS order, not the original digit ids.
     """
-    label_names = {"class", "label", "target"}
-    drop = {"time"} | label_names
-    columns = [c for c in df.columns if c.lower() not in drop]
-    if not columns:
-        raise ValueError(f"No feature columns in {list(df.columns)}")
-    labels = None
-    for column in df.columns:
-        if column.lower() in label_names:
-            labels = column
-            break
-    if labels is None:
-        raise ValueError(f"No class column in {list(df.columns)}")
-    y = df[labels].to_numpy()
-    y = np.rint(y.astype(np.float64)).astype(np.int64)
-    if set(np.unique(y).tolist()) - {0, 1}:
-        raise ValueError(f"Expected binary Class labels, found {np.unique(y)}")
-    x = df[columns].to_numpy(dtype=np.float64)
-    return x, y, columns
+    n_classes = len(DIGITS)
+    base, remainder = divmod(N_POINTS, n_classes)
+    chosen = []
+    subset_labels = []
+    counts = []
+    for class_id, digit in enumerate(DIGITS):
+        count = base + (1 if class_id < remainder else 0)
+        pool = np.flatnonzero(labels == digit)
+        if len(pool) < count:
+            raise ValueError(f"Digit {digit} has {len(pool)} rows, need {count}.")
+        pick = rng.choice(pool, size=count, replace=False)
+        chosen.append(pick)
+        subset_labels.append(np.full(count, class_id, dtype=np.int64))
+        counts.append(count)
+    indices = np.concatenate(chosen)
+    y = np.concatenate(subset_labels)
+    order = rng.permutation(len(indices))
+    indices = indices[order]
+    y = y[order]
 
-
-def subsample(x, y, rng):
-    """2000 rows with 10 fraud cases, then 200 seeds (4 of them fraud)."""
-    fraud = np.flatnonzero(y == 1)
-    normal = np.flatnonzero(y == 0)
-    if len(fraud) < N_FRAUD or len(normal) < N_POINTS - N_FRAUD:
-        raise ValueError(
-            f"Need at least {N_FRAUD} fraud and {N_POINTS - N_FRAUD} "
-            f"non-fraud rows, found {len(fraud)} and {len(normal)}."
-        )
-    chosen = np.concatenate(
-        [
-            rng.choice(fraud, size=N_FRAUD, replace=False),
-            rng.choice(normal, size=N_POINTS - N_FRAUD, replace=False),
-        ]
-    )
-    rng.shuffle(chosen)
-    x_sub = x[chosen]
-    y_sub = y[chosen]
-
-    fraud_pos = np.flatnonzero(y_sub == 1)
-    normal_pos = np.flatnonzero(y_sub == 0)
     labeled = np.zeros(N_POINTS, dtype=bool)
-    labeled[rng.choice(fraud_pos, size=N_LABELED_FRAUD, replace=False)] = True
-    labeled[
-        rng.choice(normal_pos, size=N_LABELED - N_LABELED_FRAUD, replace=False)
-    ] = True
-    return x_sub, y_sub, labeled
+    label_base, label_remainder = divmod(N_LABELED, n_classes)
+    labeled_counts = []
+    for class_id in range(n_classes):
+        count = label_base + (1 if class_id < label_remainder else 0)
+        positions = np.flatnonzero(y == class_id)
+        labeled[rng.choice(positions, size=count, replace=False)] = True
+        labeled_counts.append(count)
+    return indices, y, labeled, counts, labeled_counts
+
+
+def load_images(dataset, indices):
+    """Flatten the chosen MNIST digits to [0, 1] pixel vectors."""
+    rows = []
+    for index in indices:
+        image = np.asarray(dataset[int(index)]["image"], dtype=np.float64)
+        rows.append(image.reshape(-1) / 255.0)
+    return np.stack(rows, axis=0)
 
 
 def l2_normalize(x):
-    scaled = StandardScaler().fit_transform(x)
-    norms = np.linalg.norm(scaled, axis=1, keepdims=True)
-    return scaled / np.clip(norms, 1e-12, None)
+    norms = np.linalg.norm(x, axis=1, keepdims=True)
+    return x / np.clip(norms, 1e-12, None)
 
 
 def knn_affinity(descriptors, k, gamma):
     """Equation (9): a_ij = [v_i · v_j]_+^γ when i is a k-NN of j."""
     n = descriptors.shape[0]
-    # Ask for extra neighbors so exact duplicate rows still leave k others
-    # after self is removed.
     neighbors = NearestNeighbors(n_neighbors=k + 3, metric="euclidean")
     neighbors.fit(descriptors)
     _, index = neighbors.kneighbors(descriptors)
@@ -179,11 +154,11 @@ def normalized_adjacency(affinity):
     return adjacency, normalized
 
 
-def label_matrix(y, labeled):
-    """Y is one-hot on labeled rows and zero on held-out rows. Column 1 is fraud."""
-    matrix = np.zeros((y.shape[0], 2), dtype=np.float64)
-    matrix[labeled & (y == 0), 0] = 1.0
-    matrix[labeled & (y == 1), 1] = 1.0
+def label_matrix(y, labeled, n_classes):
+    """Y is one-hot on labeled rows and zero on held-out rows."""
+    matrix = np.zeros((y.shape[0], n_classes), dtype=np.float64)
+    rows = np.flatnonzero(labeled)
+    matrix[rows, y[rows]] = 1.0
     return matrix
 
 
@@ -211,9 +186,7 @@ def project_umap(descriptors):
     reducer = umap.UMAP(
         n_components=2,
         n_neighbors=15,
-        # A larger min_dist keeps the fraud cases from stacking on the
-        # non-fraud mass. t-SNE packed that group even tighter.
-        min_dist=0.8,
+        min_dist=0.2,
         metric="cosine",
         random_state=SEED,
     )
@@ -225,85 +198,56 @@ def edge_segments(adjacency, xy):
     return np.stack([xy[row], xy[col]], axis=1)
 
 
-def class_weights(scores):
-    """Row-normalized fraud weight. Negative mass marks 'no label yet'."""
+def class_probabilities(scores):
+    """Row-normalized class weights. `known` is False where no mass has arrived."""
     mass = scores.sum(axis=1)
-    weight = np.full(scores.shape[0], -1.0, dtype=np.float64)
     known = mass > 1e-12
-    weight[known] = scores[known, 1] / mass[known]
-    return weight
+    probabilities = np.zeros_like(scores)
+    probabilities[known] = scores[known] / mass[known, None]
+    return probabilities, known
 
 
-def colors_from_weights(weight):
-    rgba = np.empty((weight.shape[0], 4), dtype=np.float64)
-    unknown = weight < 0
-    rgba[unknown] = matplotlib.colors.to_rgba(UNLABELED_GRAY)
-    if np.any(~unknown):
-        rgba[~unknown] = WEIGHT_CMAP(np.clip(weight[~unknown], 0.0, 1.0))
+def colors_from_probabilities(probabilities, known):
+    rgba = np.empty((probabilities.shape[0], 4), dtype=np.float64)
+    rgba[:] = matplotlib.colors.to_rgba(UNLABELED_GRAY)
+    if np.any(known):
+        rgb = probabilities[known] @ class_rgb()
+        rgba[known, :3] = rgb
+        rgba[known, 3] = 1.0
     return rgba
 
 
 def hard_colors(classes, known):
-    """classes: 0 non-fraud, 1 fraud. Unknown rows are gray."""
     rgba = np.empty((classes.shape[0], 4), dtype=np.float64)
     rgba[:] = matplotlib.colors.to_rgba(UNLABELED_GRAY)
-    rgba[known & (classes == 0)] = matplotlib.colors.to_rgba(NONFRAUD_RED)
-    rgba[known & (classes == 1)] = matplotlib.colors.to_rgba(FRAUD_BLUE)
+    for class_id, color in enumerate(CLASS_COLORS):
+        rgba[known & (classes == class_id)] = matplotlib.colors.to_rgba(color)
     return rgba
 
 
-def _scatter(ax, xy, rgba, labeled, weight_for_size):
-    """Non-fraud is a light background. Fraud is large, opaque, and on top.
-
-    Ten fraud points inside 1,990 non-fraud markers disappear if both are
-    drawn the same way. Seeds stay triangles.
-    """
-    fraudish = weight_for_size > 0.5
-    background = rgba.copy()
-    background[~fraudish, 3] = 0.22
-    unknown = weight_for_size < 0
-    background[unknown, 3] = 0.38
-
-    for mask, marker, size in (
-        (~labeled & ~fraudish, "o", 10.0),
-        (labeled & ~fraudish, "^", 16.0),
-    ):
-        if not np.any(mask):
-            continue
+def _scatter(ax, xy, rgba, labeled):
+    """Triangles are seeds. Circles are unlabeled. Classes share one size."""
+    if np.any(~labeled):
         ax.scatter(
-            xy[mask, 0],
-            xy[mask, 1],
-            c=background[mask],
-            s=size,
-            marker=marker,
-            linewidths=0,
-            zorder=2 if marker == "o" else 3,
+            xy[~labeled, 0],
+            xy[~labeled, 1],
+            c=rgba[~labeled],
+            s=16,
+            marker="o",
+            linewidths=0.15,
+            edgecolors="#333333",
+            zorder=2,
         )
-
-    for mask, marker, size in (
-        (~labeled & fraudish, "o", 70.0),
-        (labeled & fraudish, "^", 120.0),
-    ):
-        if not np.any(mask):
-            continue
+    if np.any(labeled):
         ax.scatter(
-            xy[mask, 0],
-            xy[mask, 1],
-            s=size * 2.4,
-            c="white",
-            marker=marker,
-            linewidths=0,
-            zorder=5,
-        )
-        ax.scatter(
-            xy[mask, 0],
-            xy[mask, 1],
-            c=rgba[mask],
-            s=size,
-            marker=marker,
-            linewidths=0.7,
-            edgecolors="#08306b",
-            zorder=6,
+            xy[labeled, 0],
+            xy[labeled, 1],
+            c=rgba[labeled],
+            s=36,
+            marker="^",
+            linewidths=0.4,
+            edgecolors="#222222",
+            zorder=3,
         )
 
 
@@ -315,7 +259,7 @@ def _draw_graph(ax, segments):
             segments,
             colors="#9aa0a6",
             linewidths=0.35,
-            alpha=0.28,
+            alpha=0.35,
             zorder=1,
         )
     )
@@ -335,71 +279,94 @@ def _style_axis(ax, xy):
     ax.set_facecolor("white")
 
 
-def _footer(fig, x=0.46):
-    fig.text(
-        x,
-        0.015,
-        "Blue fraud is drawn on top    Red non-fraud is lighter"
-        "    Gray = no propagated mass    Triangle = labeled seed",
-        ha="center",
-        va="bottom",
-        fontsize=9,
-        color="#333333",
+def _legend_handles():
+    handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="none",
+            markerfacecolor=color,
+            markeredgecolor="#333333",
+            markersize=8,
+            label=name,
+        )
+        for color, name in zip(CLASS_COLORS, class_names())
+    ]
+    handles.append(
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="none",
+            markerfacecolor=UNLABELED_GRAY,
+            markeredgecolor="#333333",
+            markersize=8,
+            label="no mass yet",
+        )
     )
+    return handles
 
 
 def _inches_to_fig(width_in, height_in):
     return width_in / FIGSIZE[0], height_in / FIGSIZE[1]
 
 
-def render_evolution_frame(path, xy, segments, labeled, weight, epoch, delta):
+def _add_side_legend(fig, ax):
+    position = ax.get_position()
+    fig.legend(
+        handles=_legend_handles(),
+        loc="center left",
+        bbox_to_anchor=(position.x1 + 0.02, position.y0 + position.height / 2),
+        frameon=False,
+        fontsize=10,
+        title="class weight",
+    )
+
+
+def render_evolution_frame(path, xy, segments, labeled, scores, epoch, delta):
     fig = plt.figure(figsize=FIGSIZE, dpi=DPI)
     fig.patch.set_facecolor("white")
-    # Square axes, centered, with the colorbar immediately to its right.
-    # A wide 16:9 subplot plus equal aspect otherwise pins the cloud to one side.
-    side = 5.35
+    side = 5.2
     width, height = _inches_to_fig(side, side)
-    colorbar_width = 0.018
+    legend_w = 0.16
     gap = 0.02
-    left = (1.0 - width - gap - colorbar_width) / 2
-    bottom = 0.11
+    left = (1.0 - width - gap - legend_w) / 2
+    bottom = 0.12
     ax = fig.add_axes([left, bottom, width, height])
-    color_ax = fig.add_axes([left + width + gap, bottom + 0.03, colorbar_width, height - 0.06])
     _draw_graph(ax, segments)
-    rgba = colors_from_weights(weight)
-    _scatter(ax, xy, rgba, labeled, weight)
+    probabilities, known = class_probabilities(scores)
+    _scatter(ax, xy, colors_from_probabilities(probabilities, known), labeled)
     _style_axis(ax, xy)
-
-    colorbar = fig.colorbar(
-        plt.cm.ScalarMappable(cmap=WEIGHT_CMAP, norm=plt.Normalize(0, 1)),
-        cax=color_ax,
-    )
-    colorbar.set_label("fraud weight", fontsize=9)
-    colorbar.set_ticks([0, 0.5, 1])
-    colorbar.set_ticklabels(["non-fraud", "mixed", "fraud"])
+    _add_side_legend(fig, ax)
 
     fig.suptitle(
-        "Label propagation on a 2-NN graph of credit-card transactions",
+        "Label propagation on MNIST digits 0, 1, and 2",
         fontsize=15,
         fontweight="bold",
         y=0.96,
     )
     if epoch == 0:
-        subtitle = "Epoch 0 / 200    initial seeds only (4 fraud, 196 non-fraud)"
+        subtitle = "Epoch 0 / 200    seeds only, unlabeled points in gray"
     else:
         subtitle = f"Epoch {epoch} / 200    ||ΔZ|| = {delta:.2e}"
     ax.set_title(subtitle, fontsize=12, pad=8)
-    _footer(fig)
+    fig.text(
+        0.42,
+        0.02,
+        "Color mixes the three class weights    Triangle = labeled seed    Circle = unlabeled",
+        ha="center",
+        va="bottom",
+        fontsize=9,
+        color="#333333",
+    )
     fig.savefig(path, dpi=DPI)
     plt.close(fig)
 
 
 def render_final_frame(path, xy, segments, labeled, scores, y):
-    weight = class_weights(scores)
-    known = weight >= 0
+    _, known = class_probabilities(scores)
     predicted = scores.argmax(axis=1)
-    pred_weight = np.where(known, predicted.astype(np.float64), -1.0)
-    truth_weight = y.astype(np.float64)
 
     fig = plt.figure(figsize=FIGSIZE, dpi=DPI)
     fig.patch.set_facecolor("white")
@@ -418,27 +385,27 @@ def render_final_frame(path, xy, segments, labeled, scores, y):
         fontweight="bold",
         y=0.95,
     )
-
     panels = (
-        (
-            axes[0],
-            hard_colors(predicted, known),
-            pred_weight,
-            "Argmax of propagated weights",
-        ),
+        (axes[0], hard_colors(predicted, known), "Argmax of propagated weights"),
         (
             axes[1],
             hard_colors(y, np.ones(len(y), dtype=bool)),
-            truth_weight,
             "Ground truth, including held-out labels",
         ),
     )
-    for ax, rgba, size_weight, title in panels:
+    for ax, rgba, title in panels:
         _draw_graph(ax, segments)
-        _scatter(ax, xy, rgba, labeled, size_weight)
+        _scatter(ax, xy, rgba, labeled)
         _style_axis(ax, xy)
         ax.set_title(title, fontsize=12, pad=8)
-    _footer(fig, x=0.50)
+    fig.legend(
+        handles=_legend_handles()[:3],
+        loc="lower center",
+        ncol=3,
+        frameon=False,
+        fontsize=10,
+        bbox_to_anchor=(0.5, 0.02),
+    )
     fig.savefig(path, dpi=DPI)
     plt.close(fig)
 
@@ -490,57 +457,42 @@ def write_video(mp4_path, gif_path):
 
 
 def evaluate(scores, y, labeled):
-    weight = class_weights(scores)
-    known = weight >= 0
+    _, known = class_probabilities(scores)
     predicted = scores.argmax(axis=1)
     unlabeled = ~labeled
-    held_out_fraud = unlabeled & (y == 1)
 
     def accuracy(mask):
         if not np.any(mask):
             return None
         return float((predicted[mask] == y[mask]).mean())
 
+    per_class = {}
+    for class_id, name in enumerate(class_names()):
+        mask = unlabeled & (y == class_id)
+        per_class[name] = accuracy(mask)
     return {
         "unlabeled_accuracy": accuracy(unlabeled),
         "reached_unlabeled_accuracy": accuracy(unlabeled & known),
         "labeled_seed_accuracy": accuracy(labeled),
-        "held_out_fraud_recall": float(predicted[held_out_fraud].mean())
-        if np.any(held_out_fraud)
-        else None,
-        "held_out_fraud_predicted": predicted[held_out_fraud].astype(int).tolist(),
-        "held_out_fraud_weight": [
-            None if weight[i] < 0 else round(float(weight[i]), 4)
-            for i in np.flatnonzero(held_out_fraud)
-        ],
+        "unlabeled_recall_per_class": per_class,
         "fraction_reached": float(known.mean()),
-        "predicted_fraud": int((predicted[known] == 1).sum()) if np.any(known) else 0,
     }
 
 
 def main():
     rng = np.random.default_rng(SEED)
-    frame = get_fraud_data()
-    table, dataset_id = frame
-    features, labels, columns = feature_matrix(table)
+    dataset, all_labels = get_mnist_labels()
+    indices, labels, labeled, counts, labeled_counts = subsample(all_labels, rng)
     print(
-        f"Loaded {dataset_id} with shape {table.shape} "
-        f"and {int((labels == 1).sum())} fraud rows."
+        f"Loaded {DATASET_ID} ({len(all_labels)} train rows). "
+        f"Subset counts {dict(zip(class_names(), counts))}. "
+        f"Seeds {dict(zip(class_names(), labeled_counts))}."
     )
-    features, labels, labeled = subsample(features, labels, rng)
-    n_labeled_fraud = int((labeled & (labels == 1)).sum())
-    n_held_fraud = int((~labeled & (labels == 1)).sum())
-    print(
-        f"Subset: {len(labels)} points, {(labels == 1).sum()} fraud. "
-        f"Seeds: {int(labeled.sum())} ({n_labeled_fraud} fraud, "
-        f"{int((labeled & (labels == 0)).sum())} non-fraud). "
-        f"Held-out fraud: {n_held_fraud}."
-    )
-
+    features = load_images(dataset, indices)
     descriptors = l2_normalize(features)
     affinity = knn_affinity(descriptors, K_NEIGHBORS, GAMMA)
     adjacency, normalized = normalized_adjacency(affinity)
-    seeds = label_matrix(labels, labeled)
+    seeds = label_matrix(labels, labeled, len(DIGITS))
     history, deltas = propagate(normalized, seeds, ALPHA, N_EPOCHS)
     print("Projecting descriptors with UMAP...")
     xy = project_umap(descriptors)
@@ -560,7 +512,7 @@ def main():
             xy,
             segments,
             labeled,
-            class_weights(history[epoch]),
+            history[epoch],
             epoch,
             deltas[epoch],
         )
@@ -595,22 +547,18 @@ def main():
         shutil.copyfile(frame_paths[index], KEYFRAME_DIR / name)
 
     metrics = evaluate(history[N_EPOCHS], labels, labeled)
-    from scipy.sparse.csgraph import connected_components
     from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import connected_components
 
-    n_components, _ = connected_components(
-        csr_matrix(adjacency > 0), directed=False
-    )
+    n_components, _ = connected_components(csr_matrix(adjacency > 0), directed=False)
     summary = {
-        "dataset": dataset_id,
-        "requested_dataset": REQUESTED_DATASET,
+        "dataset": DATASET_ID,
+        "classes": list(class_names()),
         "n_points": N_POINTS,
-        "n_fraud": int((labels == 1).sum()),
+        "n_per_class": dict(zip(class_names(), counts)),
         "n_labeled": int(labeled.sum()),
-        "n_labeled_fraud": n_labeled_fraud,
-        "n_labeled_nonfraud": int((labeled & (labels == 0)).sum()),
-        "n_held_out_fraud": n_held_fraud,
-        "features": columns,
+        "n_labeled_per_class": dict(zip(class_names(), labeled_counts)),
+        "features": "flattened 28x28 pixels, scaled to [0, 1], L2-normalized",
         "k": K_NEIGHBORS,
         "gamma": GAMMA,
         "alpha": ALPHA,
