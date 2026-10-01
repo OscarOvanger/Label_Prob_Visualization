@@ -20,24 +20,26 @@
   "features": "flattened 28x28 pixels, scaled to [0, 1], L2-normalized",
   "k": 2,
   "gamma": 3.0,
-  "alpha": 0.99,
+  "diffusion": 0.99,
+  "alpha": 0.05,
+  "mass_scale": 0.08,
   "epochs": 200,
   "seed": 0,
   "undirected_edges": 3128,
   "connected_components": 4,
-  "delta_epoch_10": 2.0454469930334374,
-  "delta_epoch_200": 0.0010511758634112831,
+  "delta_epoch_10": 0.3963231642454939,
+  "delta_epoch_200": 0.007493556520193311,
   "frame_size": [
     1280,
     720
   ],
-  "unlabeled_accuracy": 0.98,
-  "reached_unlabeled_accuracy": 0.9849246231155779,
+  "unlabeled_accuracy": 0.9805555555555555,
+  "reached_unlabeled_accuracy": 0.9854829704075935,
   "labeled_seed_accuracy": 0.99,
   "unlabeled_recall_per_class": {
     "digit 0": 0.9983333333333333,
     "digit 1": 0.985,
-    "digit 2": 0.9566666666666667
+    "digit 2": 0.9583333333333334
   },
   "fraction_reached": 0.9955
 }

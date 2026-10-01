@@ -15,22 +15,28 @@ The movie projects digit images with UMAP, draws the 2-nearest-neighbor graph in
 ## What the movie shows
 
 1. **Opening frame.** 2000 points, split as evenly as possible across the three digits. The 200 seeds are triangles, also split across the three classes. The other 1800 points are gray circles.
-2. **Middle frames.** One frame per epoch. Every point is colored by its propagated class weights. Points that still have no mass stay gray.
+2. **Middle frames.** One frame per epoch. Color is the mix of the three class weights, and it stays pale until enough mass has propagated to that point.
 3. **Final frame.** Hard labels from `argmax` of the propagated weights, beside the ground truth for all 2000 points, including the labels that were held out.
 
-With this many seeds the 2-NN graph is covered quickly. Later frames are the fixed point of the same iteration, which is what running all 200 epochs produces.
+Each epoch takes a small step, so the three colors creep outward over the full 200 frames.
 
 ## Algorithm
 
 Descriptors are the 28×28 pixels scaled to [0, 1] and L2-normalized, the same unit-norm embedding step the paper uses before building the graph.
 
-The graph follows equation (9): for each point, the `k = 2` nearest neighbors get affinity `[cosine]_+^3`, then the affinity is symmetrized and degree-normalized. Labels then diffuse with the Zhou et al. iteration the paper cites:
+The graph follows equation (9): for each point, the `k = 2` nearest neighbors get affinity `[cosine]_+^3`, then the affinity is symmetrized and degree-normalized. One full Zhou step, the update cited in the paper, is
 
 ```
-Z ← α S Z + (1 − α) Y,    α = 0.99
+Z* = 0.99 S Z + 0.01 Y
 ```
 
-`Y` is one-hot on the 200 seeds and zero elsewhere. At convergence this matches the paper’s closed form up to the positive scale `(1 − α)`, so class ratios and `argmax` agree with equation (6).
+`Y` is one-hot on the 200 seeds and zero elsewhere. A full step of that update repaints the next graph hop in a single epoch, so the picture looks finished almost immediately. Each epoch instead moves only a fraction α of the way toward Z*:
+
+```
+Z ← (1 − α) Z + α Z*,    α = 0.05
+```
+
+The destination is still the paper’s diffusion. The small step is what makes the spread last for the whole movie. A point is drawn in a full class color only once its propagated mass reaches 0.08. Before that, the color is mixed with gray.
 
 ## Data
 

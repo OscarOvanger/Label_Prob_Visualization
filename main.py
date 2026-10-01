@@ -30,7 +30,15 @@ N_POINTS = 2000
 N_LABELED = 200
 K_NEIGHBORS = 2
 GAMMA = 3.0
-ALPHA = 0.99
+# Neighbor weight inside one full diffusion step (Iscen et al. / Zhou et al.).
+DIFFUSION = 0.99
+# Fraction of that step taken each epoch. A full step repaints the next hop
+# immediately, so the picture looks finished within a few epochs. A small
+# fraction lets the class mass creep outward across all 200 frames.
+ALPHA = 0.05
+# Propagated mass at which a point is drawn in a full class color.
+# Smaller mass is mixed back toward gray, so early epochs stay pale.
+MASS_SCALE = 0.08
 N_EPOCHS = 200
 SEED = 0
 
@@ -162,18 +170,20 @@ def label_matrix(y, labeled, n_classes):
     return matrix
 
 
-def propagate(normalized, labels, alpha, epochs):
-    """Zhou iteration Z ← α S Z + (1 − α) Y, one step per epoch.
+def propagate(normalized, labels, diffusion, step, epochs):
+    """Slow Zhou iteration.
 
-    The limit is (1 − α) (I − α S)^{-1} Y. Iscen et al. solve
-    (I − α S) Z = Y, which is the same matrix up to that positive scale,
-    so row-normalized weights and argmax agree.
+    One full diffusion step is Z* = diffusion * S Z + (1 - diffusion) * Y,
+    whose limit matches Iscen et al. up to scale. Each epoch moves only
+    `step` of the way toward that target, so the labels spread over the movie
+    instead of filling the graph in a handful of hops.
     """
     current = labels.copy()
     history = [current.copy()]
     deltas = [0.0]
     for _ in range(epochs):
-        updated = alpha * (normalized @ current) + (1.0 - alpha) * labels
+        target = diffusion * (normalized @ current) + (1.0 - diffusion) * labels
+        updated = (1.0 - step) * current + step * target
         deltas.append(float(np.linalg.norm(updated - current)))
         current = updated
         history.append(current.copy())
@@ -207,13 +217,23 @@ def class_probabilities(scores):
     return probabilities, known
 
 
-def colors_from_probabilities(probabilities, known):
-    rgba = np.empty((probabilities.shape[0], 4), dtype=np.float64)
-    rgba[:] = matplotlib.colors.to_rgba(UNLABELED_GRAY)
+def colors_from_scores(scores):
+    """Class mix, faded toward gray until enough mass has propagated.
+
+    Row-normalizing alone paints a node in a full class color the first epoch
+    any mass arrives, which hides how slowly the step is moving.
+    """
+    probabilities, known = class_probabilities(scores)
+    mass = scores.sum(axis=1)
+    strength = np.clip(mass / MASS_SCALE, 0.0, 1.0)
+    gray = np.array(matplotlib.colors.to_rgb(UNLABELED_GRAY), dtype=np.float64)
+    rgba = np.empty((scores.shape[0], 4), dtype=np.float64)
+    rgba[:, :3] = gray
+    rgba[:, 3] = 1.0
     if np.any(known):
         rgb = probabilities[known] @ class_rgb()
-        rgba[known, :3] = rgb
-        rgba[known, 3] = 1.0
+        fade = strength[known, None]
+        rgba[known, :3] = (1.0 - fade) * gray + fade * rgb
     return rgba
 
 
@@ -335,8 +355,7 @@ def render_evolution_frame(path, xy, segments, labeled, scores, epoch, delta):
     bottom = 0.12
     ax = fig.add_axes([left, bottom, width, height])
     _draw_graph(ax, segments)
-    probabilities, known = class_probabilities(scores)
-    _scatter(ax, xy, colors_from_probabilities(probabilities, known), labeled)
+    _scatter(ax, xy, colors_from_scores(scores), labeled)
     _style_axis(ax, xy)
     _add_side_legend(fig, ax)
 
@@ -349,12 +368,12 @@ def render_evolution_frame(path, xy, segments, labeled, scores, epoch, delta):
     if epoch == 0:
         subtitle = "Epoch 0 / 200    seeds only, unlabeled points in gray"
     else:
-        subtitle = f"Epoch {epoch} / 200    ||ΔZ|| = {delta:.2e}"
+        subtitle = f"Epoch {epoch} / 200    α = {ALPHA:g}    ||ΔZ|| = {delta:.2e}"
     ax.set_title(subtitle, fontsize=12, pad=8)
     fig.text(
         0.42,
         0.02,
-        "Color mixes the three class weights    Triangle = labeled seed    Circle = unlabeled",
+        "Pale color is a small propagated mass    Triangle = labeled seed    Circle = unlabeled",
         ha="center",
         va="bottom",
         fontsize=9,
@@ -493,7 +512,7 @@ def main():
     affinity = knn_affinity(descriptors, K_NEIGHBORS, GAMMA)
     adjacency, normalized = normalized_adjacency(affinity)
     seeds = label_matrix(labels, labeled, len(DIGITS))
-    history, deltas = propagate(normalized, seeds, ALPHA, N_EPOCHS)
+    history, deltas = propagate(normalized, seeds, DIFFUSION, ALPHA, N_EPOCHS)
     print("Projecting descriptors with UMAP...")
     xy = project_umap(descriptors)
     segments = edge_segments(adjacency, xy)
@@ -540,6 +559,8 @@ def main():
         "epoch_001.png": 1,
         "epoch_005.png": 5,
         "epoch_010.png": 10,
+        "epoch_040.png": 40,
+        "epoch_080.png": 80,
         "epoch_050.png": 50,
         "epoch_200_argmax_vs_truth.png": N_EPOCHS - 1,
     }
@@ -561,7 +582,9 @@ def main():
         "features": "flattened 28x28 pixels, scaled to [0, 1], L2-normalized",
         "k": K_NEIGHBORS,
         "gamma": GAMMA,
+        "diffusion": DIFFUSION,
         "alpha": ALPHA,
+        "mass_scale": MASS_SCALE,
         "epochs": N_EPOCHS,
         "seed": SEED,
         "undirected_edges": n_edges,
